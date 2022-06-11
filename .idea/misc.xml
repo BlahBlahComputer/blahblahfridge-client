@@ -8,6 +8,7 @@
         <entry key="app/src/main/res/layout/default_layout.xml" value="0.2683670043945313" />
         <entry key="app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml" value="0.363" />
         <entry key="app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml" value="0.363" />
+        <entry key="app/src/main/res/xml/provider_paths.xml" value="0.11925647451963241" />
       </map>
     </option>
   </component>
