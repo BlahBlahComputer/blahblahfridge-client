@@ -1,7 +1,9 @@
 package sogang.capstone.blahblahfridge
 
 import android.Manifest
+import android.annotation.TargetApi
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -10,41 +12,43 @@ import android.provider.MediaStore
 import android.text.TextUtils
 import android.util.Log
 import android.util.Log.INFO
+import android.view.KeyEvent
 import android.webkit.*
+import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import java.io.File
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
 
 class DefaultActivity : AppCompatActivity() {
-    val REQ_SELECT_IMAGE = 2001
-    var filePathCallback: ValueCallback<Array<Uri>>? = null
+    val FILECHOOSER_NORMAL_REQ_CODE = 2001
+    val FILECHOOSER_LOLLIPOP_REQ_CODE = 2002
+
+    var filePathCallbackNormal: ValueCallback<Uri>? = null
+    var filePathCallbackLollipop: ValueCallback<Array<Uri>>? = null
     var cameraImageUri: Uri? = null
+
+    lateinit var myWebView: WebView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.default_layout)
 
-        val cameraPermission = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-        if(cameraPermission == PackageManager.PERMISSION_DENIED) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 0)
-        }
+        checkVerify()
 
-        val storagePermission = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
-        if(storagePermission == PackageManager.PERMISSION_DENIED) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), 1)
+        myWebView = findViewById(R.id.webview)
+        myWebView.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            loadsImagesAutomatically = true
+            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            setSupportMultipleWindows(true)
         }
-
-        val writeStoragePermission = ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
-        if(writeStoragePermission == PackageManager.PERMISSION_DENIED) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), 2)
-        }
-
-        val myWebView: WebView = findViewById(R.id.webview)
         myWebView.webChromeClient = object : WebChromeClient() {
             @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
             override fun onShowFileChooser(
@@ -52,88 +56,124 @@ class DefaultActivity : AppCompatActivity() {
                 filePathCallback: ValueCallback<Array<Uri>>?,
                 fileChooserParams: FileChooserParams?
             ): Boolean {
-               var isCapture = fileChooserParams?.isCaptureEnabled ?: false
-                selectImage(filePathCallback)
+                if(filePathCallbackLollipop != null) {
+                    filePathCallbackLollipop!!.onReceiveValue(null)
+                    filePathCallbackLollipop = null
+                }
+                filePathCallbackLollipop = filePathCallback
+
+                val isCapture = fileChooserParams!!.isCaptureEnabled
+                runCamera(isCapture)
+
                 return true
             }
-        }
-        myWebView.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            setSupportMultipleWindows(true)
+
+            override fun onConsoleMessage(message: String, lineNumber: Int, sourceID: String) {
+                Log.d("MyApplication", "$message -- From line $lineNumber of $sourceID")
+            }
         }
         myWebView.webViewClient = WebViewClient()
         myWebView.loadUrl("https://www.blahblahfridge.site")
     }
 
-    fun selectImage(filePathCallback: ValueCallback<Array<Uri>>?) {
-        this.filePathCallback?.onReceiveValue(null)
-        this.filePathCallback = filePathCallback
+    @TargetApi(Build.VERSION_CODES.M)
+    private fun checkVerify() {
+        if(ContextCompat.checkSelfPermission(this, Manifest.permission.INTERNET) != PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
 
-        var state = Environment.getExternalStorageState()
-        if(!TextUtils.equals(state, Environment.MEDIA_MOUNTED)) return
-
-        var cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-        cameraIntent.resolveActivity(packageManager)?.let {
-            var photoFile: File? = createImageFile()
-            Log.d("test", "Test")
-            photoFile?.also {
-                if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val strpa = applicationContext.packageName
-                    cameraImageUri = FileProvider.getUriForFile(this, strpa + ".provider", it)
-                }
-                else {
-                    cameraImageUri = Uri.fromFile(it)
-                }
-                cameraIntent.putExtra(MediaStore.EXTRA_OUTPUT, cameraImageUri)
+            if(ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) || ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.CAMERA)) {
+                Toast.makeText(applicationContext, "권한을 허용해주세요", Toast.LENGTH_SHORT).show()
+            }
+            else {
+                ActivityCompat.requestPermissions(
+                    this, arrayOf(
+                        Manifest.permission.INTERNET,
+                        Manifest.permission.CAMERA,
+                        Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                        Manifest.permission.READ_EXTERNAL_STORAGE,
+                        Manifest.permission.ACCESS_NETWORK_STATE,
+                    ), 1
+                )
             }
         }
-
-        var intent = Intent(Intent.ACTION_PICK).apply {
-            type = MediaStore.Images.Media.CONTENT_TYPE
-            data = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-        }
-
-        Intent.createChooser(intent, "사진 가져올 방법을 선택하세요").run {
-            putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(cameraIntent))
-            startActivityForResult(this, REQ_SELECT_IMAGE)
-        }
     }
 
-    private fun createImageFile(): File {
-        val timeStamp: String = SimpleDateFormat("yyyyMMdd_HHmmss").format(Date())
-        val storageDir: File? = filesDir
-        return File(
-            storageDir,
-            "${timeStamp}.jpeg",
-        )
-    }
-
+    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         when(requestCode) {
-            REQ_SELECT_IMAGE -> {
+            FILECHOOSER_NORMAL_REQ_CODE -> {
+                if (resultCode == Activity.RESULT_OK) {
+                    if (filePathCallbackNormal == null) return
+
+                    val result = data?.data
+
+                    filePathCallbackNormal!!.onReceiveValue(result)
+                    filePathCallbackNormal = null
+                }
+            }
+            FILECHOOSER_LOLLIPOP_REQ_CODE -> {
                 if(resultCode == Activity.RESULT_OK) {
-                    filePathCallback?.let {
-                        var imageData = data
+                    var imageData = data
+                    if(filePathCallbackLollipop == null) return
 
-                        if(imageData == null) {
-                            imageData = Intent()
-                            imageData.data = cameraImageUri
-                        }
+                    if(imageData == null) imageData = Intent()
+                    if(imageData.data == null) imageData.data = cameraImageUri
 
-                        if(imageData?.data == null) {
-                            imageData?.data = cameraImageUri
-                        }
-
-                        it.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, imageData))
-                        filePathCallback = null
+                    filePathCallbackLollipop!!.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, imageData))
+                    filePathCallbackLollipop = null
+                }
+                else {
+                    if(filePathCallbackLollipop != null) {
+                        filePathCallbackLollipop!!.onReceiveValue(null)
+                        filePathCallbackLollipop = null
                     }
-                } else {
-                    filePathCallback?.onReceiveValue(null)
-                    filePathCallback = null
+
+                    if(filePathCallbackNormal != null) {
+                        filePathCallbackNormal!!.onReceiveValue(null)
+                        filePathCallbackNormal = null
+                    }
                 }
             }
         }
         super.onActivityResult(requestCode, resultCode, data)
+    }
+
+    private fun runCamera(isCapture: Boolean) {
+        val intentCamera = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+
+        val path = Environment.getExternalStorageDirectory()
+        val file = File(path, "upload.jpeg")
+        if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            val strpa = applicationContext.packageName
+            cameraImageUri = FileProvider.getUriForFile(this, strpa + ".fileprovider", file)
+        }
+        else {
+            cameraImageUri = Uri.fromFile(file)
+        }
+        intentCamera.putExtra(MediaStore.EXTRA_OUTPUT, cameraImageUri)
+
+        if(!isCapture) {
+            val pickIntent = Intent(Intent.ACTION_PICK)
+            pickIntent.setType(MediaStore.Images.Media.CONTENT_TYPE)
+            pickIntent.setData(MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+
+            val chooserIntent = Intent.createChooser(pickIntent, "사진 가져올 방법을 선택하세요")
+
+            chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(intentCamera))
+            startActivityForResult(chooserIntent, FILECHOOSER_LOLLIPOP_REQ_CODE)
+        }
+        else {
+            startActivityForResult(intentCamera, FILECHOOSER_LOLLIPOP_REQ_CODE)
+        }
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if((keyCode == KeyEvent.KEYCODE_BACK) && myWebView.canGoBack()) {
+            myWebView.goBack()
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
     }
 }
